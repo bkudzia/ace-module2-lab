@@ -21,6 +21,160 @@ function favicon () {
   return utils.extractFilename(config.get('application.favicon'))
 }
 
+function safeEval (code: string): any {
+  const tokens: Array<{ type: string, value: any }> = []
+  let i = 0
+
+  while (i < code.length) {
+    const char = code[i]
+
+    if (/\s/.test(char)) {
+      i++
+      continue
+    }
+
+    if (/[0-9]/.test(char) || (char === '.' && /[0-9]/.test(code[i + 1] || ''))) {
+      let numStr = ''
+      while (i < code.length && /[0-9.]/.test(code[i])) {
+        numStr += code[i]
+        i++
+      }
+      const val = parseFloat(numStr)
+      if (isNaN(val)) throw new Error('Invalid number')
+      tokens.push({ type: 'NUMBER', value: val })
+      continue
+    }
+
+    if (char === "'" || char === '"' || char === '`') {
+      const quote = char
+      let strVal = ''
+      i++
+      let escaped = false
+      while (i < code.length) {
+        if (escaped) {
+          strVal += code[i]
+          escaped = false
+        } else if (code[i] === '\\') {
+          escaped = true
+        } else if (code[i] === quote) {
+          break
+        } else {
+          strVal += code[i]
+        }
+        i++
+      }
+      if (i >= code.length) throw new Error('Unterminated string literal')
+      i++
+      tokens.push({ type: 'STRING', value: strVal })
+      continue
+    }
+
+    if (['+', '-', '*', '/', '(', ')'].includes(char)) {
+      tokens.push({ type: 'OPERATOR', value: char })
+      i++
+      continue
+    }
+
+    if (code.startsWith('true', i)) {
+      tokens.push({ type: 'BOOLEAN', value: true })
+      i += 4
+      continue
+    }
+    if (code.startsWith('false', i)) {
+      tokens.push({ type: 'BOOLEAN', value: false })
+      i += 5
+      continue
+    }
+    if (code.startsWith('null', i)) {
+      tokens.push({ type: 'NULL', value: null })
+      i += 4
+      continue
+    }
+
+    throw new Error(`Forbidden character or symbol: ${char}`)
+  }
+
+  let tokenIdx = 0
+
+  function peek () {
+    return tokens[tokenIdx]
+  }
+
+  function consume (expectedType?: string, expectedValue?: any) {
+    const token = tokens[tokenIdx]
+    if (!token) throw new Error('Unexpected end of input')
+    if (expectedType && token.type !== expectedType) {
+      throw new Error(`Expected token type ${expectedType}, got ${token.type}`)
+    }
+    if (expectedValue !== undefined && token.value !== expectedValue) {
+      throw new Error(`Expected token value ${expectedValue}, got ${token.value}`)
+    }
+    tokenIdx++
+    return token
+  }
+
+  function parseFactor (): any {
+    const token = peek()
+    if (!token) throw new Error('Unexpected end of expression')
+
+    if (token.type === 'NUMBER' || token.type === 'STRING' || token.type === 'BOOLEAN' || token.type === 'NULL') {
+      consume()
+      return token.value
+    }
+
+    if (token.type === 'OPERATOR' && token.value === '(') {
+      consume('OPERATOR', '(')
+      const val = parseExpr()
+      consume('OPERATOR', ')')
+      return val
+    }
+
+    throw new Error(`Unexpected token: ${token.value}`)
+  }
+
+  function parseTerm (): any {
+    let val = parseFactor()
+    while (true) {
+      const next = peek()
+      if (next && next.type === 'OPERATOR' && (next.value === '*' || next.value === '/')) {
+        const op = consume().value
+        const right = parseFactor()
+        if (op === '*') val = val * right
+        else val = val / right
+      } else {
+        break
+      }
+    }
+    return val
+  }
+
+  function parseExpr (): any {
+    let val = parseTerm()
+    while (true) {
+      const next = peek()
+      if (next && next.type === 'OPERATOR' && (next.value === '+' || next.value === '-')) {
+        const op = consume().value
+        const right = parseTerm()
+        if (op === '+') val = val + right
+        else val = val - right
+      } else {
+        break
+      }
+    }
+    return val
+  }
+
+  if (tokens.length === 0) {
+    return ''
+  }
+
+  const result = parseExpr()
+  if (tokenIdx < tokens.length) {
+    throw new Error('Unexpected tokens at the end of expression')
+  }
+  return result
+}
+
 export function getUserProfile () {
   return async (req: Request, res: Response, next: NextFunction) => {
     let template: string
@@ -58,12 +212,12 @@ export function getUserProfile () {
         if (!code) {
           throw new Error('Username is null')
         }
-        username = eval(code) // eslint-disable-line no-eval
+        username = safeEval(code)
       } catch (err) {
-        username = '\\' + username
+        username = '\\\\' + username
       }
     } else {
-      username = '\\' + username
+      username = '\\\\' + username
     }
 
     const themeKey = config.get<string>('application.theme') as keyof typeof themes
