@@ -30,6 +30,14 @@ export function showProductReviews () {
     // Truncate id to avoid unintentional RCE
     const id = !utils.isChallengeEnabled(challenges.noSqlCommandChallenge) ? Number(req.params.id) : utils.trunc(req.params.id, 40)
 
+    if (utils.isChallengeEnabled(challenges.noSqlCommandChallenge)) {
+      const safePattern = /^\d+(?:\s*(?:\|\||&&)\s*sleep\(\s*\d+\s*\))?$/
+      if (typeof id === 'string' && !safePattern.test(id)) {
+        res.status(400).json({ error: 'Wrong Params' })
+        return
+      }
+    }
+
     // Measure how long the query takes, to check if there was a nosql dos attack
     const t0 = new Date().getTime()
 
