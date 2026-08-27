@@ -31,6 +31,33 @@ function isSafeOrderLinesData (data: string): boolean {
   // 4. Unescape octal escapes: \OOO (up to 3 octal digits)
   str = str.replace(/\\([0-7]{1,3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)))
 
+  // Strict structural and character-level controls to prevent sandbox escapes:
+  // - Block brackets [ and ] to prevent bracket-based dynamic property access
+  if (str.includes('[') || str.includes(']')) {
+    return false
+  }
+
+  // - Block quotes ', " and ` to prevent string literal declaration/manipulation
+  if (str.includes("'") || str.includes('"') || str.includes('`')) {
+    return false
+  }
+
+  // - Block backslash \ to prevent escape sequences in the final code
+  if (str.includes('\\')) {
+    return false
+  }
+
+  // - Block dot . notation unless it is strictly part of a decimal number (e.g. 2.5)
+  // All other occurrences of dots (property access, method invocation) are rejected.
+  if (/(?<!\d)\.|\.(?!\d)/.test(str)) {
+    return false
+  }
+
+  // - Block comment delimiters to prevent comment-based filter bypasses
+  if (str.includes('//') || str.includes('/*') || str.includes('*/')) {
+    return false
+  }
+
   const lowerStr = str.toLowerCase()
 
   // Create a normalized version with all non-alphanumeric characters removed
