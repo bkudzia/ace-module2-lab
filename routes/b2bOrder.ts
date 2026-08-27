@@ -13,11 +13,71 @@ import { challenges } from '../data/datacache'
 import * as security from '../lib/insecurity'
 import * as utils from '../lib/utils'
 
+function isSafeOrderLinesData (data: string): boolean {
+  let str = String(data)
+
+  // Normalize Unicode to NFKC form to prevent any unicode normalization bypasses
+  str = str.normalize('NFKC')
+
+  // 1. Unescape hex escapes: \xHH
+  str = str.replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+
+  // 2. Unescape unicode escapes: \uHHHH
+  str = str.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+
+  // 3. Unescape unicode code point escapes: \u{HHHH}
+  str = str.replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+
+  // 4. Unescape octal escapes: \OOO (up to 3 octal digits)
+  str = str.replace(/\\([0-7]{1,3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)))
+
+  const lowerStr = str.toLowerCase()
+
+  // Create a normalized version with all non-alphanumeric characters removed
+  const normalized = lowerStr.replace(/[^a-z0-9]/g, '')
+
+  const blocklist = [
+    'this',
+    'constructor',
+    'prototype',
+    'proto',
+    'process',
+    'require',
+    'exec',
+    'spawn',
+    'childprocess',
+    'function',
+    'eval',
+    'global',
+    'window',
+    'document',
+    'fromcharcode',
+    'callee',
+    'caller',
+    'arguments',
+    'reflect',
+    'proxy',
+    'mainmodule',
+    'import'
+  ]
+
+  for (const keyword of blocklist) {
+    if (lowerStr.includes(keyword) || normalized.includes(keyword)) {
+      return false
+    }
+  }
+
+  return true
+}
+
 export function b2bOrder () {
   return ({ body }: Request, res: Response, next: NextFunction) => {
     if (utils.isChallengeEnabled(challenges.rceChallenge) || utils.isChallengeEnabled(challenges.rceOccupyChallenge)) {
       const orderLinesData = body.orderLinesData || ''
       try {
+        if (!isSafeOrderLinesData(orderLinesData)) {
+          throw new Error('Blocked dangerous input')
+        }
         const sandbox = { safeEval, orderLinesData }
         vm.createContext(sandbox)
         vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })
